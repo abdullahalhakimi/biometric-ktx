@@ -1,7 +1,3 @@
 <resources>
     <string name="app_name">Biometric KTX Sample</string>
-    <string name="auth_plain">Authenticate (strong biometric)</string>
-    <string name="auth_credential_fallback">Authenticate (biometric or PIN)</string>
-    <string name="auth_crypto">Encrypt &amp; sign with biometric-bound key</string>
-    <string name="result_placeholder">Result will appear here</string>
 </resources>

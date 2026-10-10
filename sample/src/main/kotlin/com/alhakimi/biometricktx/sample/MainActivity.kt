@@ -1,129 +1,125 @@
 package com.alhakimi.biometricktx.sample
 
 import android.os.Bundle
-import android.widget.Button
-import android.widget.LinearLayout
-import android.widget.TextView
-import android.widget.Toast
+import androidx.activity.compose.setContent
 import androidx.appcompat.app.AppCompatActivity
-import androidx.lifecycle.lifecycleScope
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import com.alhakimi.biometricktx.Authenticators
 import com.alhakimi.biometricktx.BiometricAuthenticator
-import com.alhakimi.biometricktx.BiometricResult
-import com.alhakimi.biometricktx.crypto.BiometricCrypto
-import com.alhakimi.biometricktx.crypto.BiometricKeyStore
-import com.alhakimi.biometricktx.crypto.EncryptedData
-import com.alhakimi.biometricktx.crypto.KeyInvalidatedException
+import com.alhakimi.biometricktx.BiometricAvailability
+import com.alhakimi.biometricktx.sample.ui.BiometricOutcome
+import com.alhakimi.biometricktx.sample.ui.HomeScreen
+import com.alhakimi.biometricktx.sample.ui.LoginScreen
+import com.alhakimi.biometricktx.sample.ui.LoginLoading
+import com.alhakimi.biometricktx.sample.ui.authenticateWithBiometric
+import com.alhakimi.biometricktx.sample.ui.theme.BiometricSampleTheme
 import kotlinx.coroutines.launch
 
 /**
- * Minimal demo exercising the library:
- *  - plain strong-biometric auth
- *  - biometric-or-credential auth
- *  - crypto-bound auth (encrypt then decrypt with a biometric-gated Keystore key)
+ * A biometric-first login demo.
+ *
+ * On launch the app attempts a biometric sign-in automatically. Success swaps to [HomeScreen]; any
+ * terminal biometric outcome falls back to the password form on [LoginScreen]. The password path is
+ * a demo stub (accepts any non-blank credentials) — this is not real authentication.
+ *
+ * The activity must be an [AppCompatActivity] (a FragmentActivity) because androidx.biometric's
+ * BiometricPrompt requires one.
  */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var authenticator: BiometricAuthenticator
-    private lateinit var resultView: TextView
-    private val keyStore = BiometricKeyStore()
-
-    // Holds the last ciphertext so the demo can decrypt it on a follow-up auth.
-    private var lastEncrypted: EncryptedData? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         authenticator = BiometricAuthenticator(this)
-        resultView = TextView(this).apply {
-            text = getString(R.string.result_placeholder)
-            setPadding(32, 32, 32, 32)
-        }
 
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(button(getString(R.string.auth_plain)) { runPlainAuth() })
-            addView(button(getString(R.string.auth_credential_fallback)) { runCredentialAuth() })
-            addView(button(getString(R.string.auth_crypto)) { runCryptoAuth() })
-            addView(resultView)
-        }
-        setContentView(root)
-    }
-
-    private fun button(label: String, onClick: () -> Unit): Button =
-        Button(this).apply {
-            text = label
-            setOnClickListener { onClick() }
-        }
-
-    private fun runPlainAuth() {
-        lifecycleScope.launch {
-            val result = authenticator.authenticate {
-                title = "Confirm it's you"
-                subtitle = "Use your fingerprint or face"
-                negativeButtonText = "Use PIN instead"
-                allowedAuthenticators = Authenticators.BIOMETRIC_STRONG
+        setContent {
+            BiometricSampleTheme {
+                LoginFlow(
+                    authenticator = authenticator,
+                    biometricAvailable = biometricAvailable(),
+                )
             }
-            showResult("Plain auth", result)
         }
     }
 
-    private fun runCredentialAuth() {
-        lifecycleScope.launch {
-            val result = authenticator.authenticate {
-                title = "Confirm it's you"
-                allowedAuthenticators = Authenticators.BIOMETRIC_STRONG_OR_DEVICE_CREDENTIAL
+    /** Whether a biometric prompt could plausibly succeed right now. */
+    private fun biometricAvailable(): Boolean =
+        authenticator.canAuthenticate(Authenticators.BIOMETRIC_STRONG) ==
+            BiometricAvailability.Available
+}
+
+/**
+ * Owns the login session state and switches between the login flow and the home screen.
+ *
+ * The biometric prompt fires once automatically when the login flow first composes (biometric-first),
+ * and again on demand via the "Use biometric" button.
+ */
+@Composable
+private fun LoginFlow(
+    authenticator: BiometricAuthenticator,
+    biometricAvailable: Boolean,
+) {
+    var authState by remember { mutableStateOf<AuthState>(AuthState.NotLoggedIn) }
+    var passwordHint by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+
+    // Local scope so button handlers can launch coroutines that update state.
+    val scope = rememberCoroutineScope()
+
+    // Shared handler for a biometric attempt (auto or button-triggered).
+    suspend fun runBiometric() {
+        busy = true
+        when (val outcome = authenticateWithBiometric(authenticator)) {
+            is BiometricOutcome.Authenticated ->
+                authState = AuthState.LoggedIn(LoginMethod.Biometric)
+            is BiometricOutcome.ShowPassword -> {
+                passwordHint = outcome.hint
+                busy = false
             }
-            showResult("Biometric or PIN", result)
         }
     }
 
-    private fun runCryptoAuth() {
-        lifecycleScope.launch {
-            val alias = "sample_auth_key"
-            if (!keyStore.hasKey(alias)) {
-                keyStore.generateKey(alias)
-            }
-
-            val cryptoObject = try {
-                keyStore.cryptoObjectFor(alias)
-            } catch (e: KeyInvalidatedException) {
-                // Key was invalidated (enrollment changed): recreate and retry once.
-                keyStore.deleteKey(alias)
-                keyStore.generateKey(alias)
-                keyStore.cryptoObjectFor(alias)
-            }
-
-            val result = authenticator.authenticate {
-                title = "Authorize secure operation"
-                subtitle = "Biometric required to use the stored key"
-                allowedAuthenticators = Authenticators.BIOMETRIC_STRONG
-                this.cryptoObject = cryptoObject
-            }
-
-            if (result is BiometricResult.Success) {
-                val cipher = cryptoObject.cipher
-                if (cipher != null) {
-                    val payload = "secret-payload".toByteArray()
-                    val encrypted = BiometricCrypto.encrypt(cipher, payload)
-                    lastEncrypted = encrypted
-                    val decrypted = BiometricCrypto.decrypt(keyStore.getKey(alias)!!, encrypted)
-                    resultView.text =
-                        "Crypto auth: SUCCESS\nDecrypted = \"${String(decrypted)}\""
-                    return@launch
-                }
-            }
-            showResult("Crypto auth", result)
+    // Biometric-first: attempt once automatically on entering the login flow. LaunchedEffect keys on
+    // the auth state so it re-arms after a logout, and is lifecycle-aware (won't leak or re-fire on
+    // recomposition).
+    if (authState is AuthState.NotLoggedIn && biometricAvailable) {
+        LaunchedEffect(authState) {
+            runBiometric()
         }
     }
 
-    private fun showResult(label: String, result: BiometricResult) {
-        val text = when (result) {
-            is BiometricResult.Success -> "$label: SUCCESS"
-            is BiometricResult.Failed -> "$label: FAILED (${result.error::class.simpleName})"
-            is BiometricResult.Error -> "$label: ERROR (${result.error::class.simpleName})"
+    when (val state = authState) {
+        is AuthState.LoggedIn -> HomeScreen(
+            method = state.method,
+            onLogout = {
+                authState = AuthState.NotLoggedIn
+                passwordHint = null
+            },
+        )
+
+        is AuthState.NotLoggedIn -> {
+            if (busy) {
+                LoginLoading()
+            } else {
+                LoginScreen(
+                    hint = passwordHint,
+                    biometricAvailable = biometricAvailable,
+                    onLogin = { _, _ ->
+                        // Demo stub: accept any non-blank credentials.
+                        authState = AuthState.LoggedIn(LoginMethod.Password)
+                    },
+                    onUseBiometric = {
+                        scope.launch { runBiometric() }
+                    },
+                )
+            }
         }
-        resultView.text = text
-        Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
     }
 }

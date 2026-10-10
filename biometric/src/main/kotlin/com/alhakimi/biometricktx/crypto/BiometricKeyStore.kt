@@ -1,8 +1,10 @@
 package com.alhakimi.biometricktx.crypto
 
+import android.content.Context
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import android.app.KeyguardManager
 import androidx.biometric.BiometricPrompt
 import java.security.KeyStore
 import javax.crypto.KeyGenerator
@@ -11,27 +13,37 @@ import javax.crypto.SecretKey
 /**
  * Manages Android Keystore keys that are gated behind biometric authentication.
  *
- * A key created here can only be used to sign/encrypt once the user passes a biometric (or
+ * A key created here can only be used to encrypt/decrypt once the user passes a biometric (or
  * device-credential) check, which is enforced by the Keystore itself. Use [cryptoObjectFor] to get
  * a [BiometricPrompt.CryptoObject] to pass into a prompt, then perform the operation after
  * authentication succeeds.
  *
- * ```kotlin
- * val keyStore = BiometricKeyStore()
- * keyStore.generateKey("auth_key")
+ * Creating a biometric-bound key requires a secure screen lock (PIN / pattern / password). Call
+ * [isDeviceSecure] first, or be prepared to catch [SecureLockScreenRequiredException].
  *
- * val result = authenticator.authenticate {
- *     title = "Confirm it's you"
- *     cryptoObject = keyStore.cryptoObjectFor("auth_key")
- * }
- * if (result is BiometricResult.Success) {
- *     val signature = keyStore.signWithKey("auth_key", payload)
+ * ```kotlin
+ * val keyStore = BiometricKeyStore(context)
+ * if (keyStore.isDeviceSecure()) {
+ *     keyStore.generateKey("auth_key")
  * }
  * ```
  */
-class BiometricKeyStore {
+class BiometricKeyStore(context: Context) {
 
+    private val appContext: Context = context.applicationContext
     private val keyStore: KeyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+
+    /**
+     * Whether a secure screen lock (PIN / pattern / password) is currently set.
+     *
+     * Biometric-bound keys cannot be created or used without one, so check this before calling
+     * [generateKey].
+     */
+    fun isDeviceSecure(): Boolean {
+        val keyguardManager =
+            appContext.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        return keyguardManager?.isDeviceSecure == true
+    }
 
     /**
      * Generates (or regenerates) a biometric-gated AES key under [alias].
@@ -42,12 +54,20 @@ class BiometricKeyStore {
      *   check (validity is bounded by the platform to at most 30s for strong biometrics).
      * @param invalidatedByBiometricEnrollment When `true` (default), adding or removing a biometric
      *   enrollment invalidates the key (surfacing as [KeyInvalidatedException]).
+     *
+     * @throws SecureLockScreenRequiredException if no secure screen lock is set.
      */
     fun generateKey(
         alias: String,
         requireBiometricPerUse: Boolean = true,
         invalidatedByBiometricEnrollment: Boolean = true,
     ): SecretKey {
+        // Fail fast with a clear, typed error instead of letting the Keystore throw a cryptic
+        // InvalidAlgorithmParameterException when no secure lock screen is present.
+        if (!isDeviceSecure()) {
+            throw SecureLockScreenRequiredException()
+        }
+
         val keyGenerator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
 
         val builder = KeyGenParameterSpec.Builder(
@@ -79,8 +99,16 @@ class BiometricKeyStore {
             )
         }
 
-        keyGenerator.init(builder.build())
-        return keyGenerator.generateKey()
+        return try {
+            keyGenerator.init(builder.build())
+            keyGenerator.generateKey()
+        } catch (e: java.security.InvalidAlgorithmParameterException) {
+            // Defensive: surfaces as a typed error if the keystore rejects the spec for a reason
+            // other than (or in addition to) the lock-screen precondition checked above.
+            throw SecureLockScreenRequiredException(cause = e)
+        } catch (e: java.security.ProviderException) {
+            throw SecureLockScreenRequiredException(cause = e)
+        }
     }
 
     /**
