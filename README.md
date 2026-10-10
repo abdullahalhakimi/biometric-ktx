@@ -42,6 +42,66 @@ when (result) {
 }
 ```
 
+## Usage in Jetpack Compose
+
+The library is UI-toolkit-agnostic and has no View/XML dependencies, so it works in a pure Compose
+app. There is **one requirement**: `BiometricAuthenticator` needs a `FragmentActivity`, which
+androidx.biometric's `BiometricPrompt` requires. The default Compose template's `ComponentActivity`
+is *not* a `FragmentActivity`, so extend `AppCompatActivity` (or `FragmentActivity`):
+
+```kotlin
+// ✗ will not compile — ComponentActivity is not a FragmentActivity
+class MainActivity : ComponentActivity()
+
+// ✓ AppCompatActivity IS a FragmentActivity
+class MainActivity : AppCompatActivity() {
+    private lateinit var authenticator: BiometricAuthenticator
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        authenticator = BiometricAuthenticator(this)   // construct once, after attach()
+        setContent { BiometricSampleTheme { LoginFlow(authenticator) } }
+    }
+}
+```
+
+Then drive it from ordinary Compose state. Auto-prompt once on entering the login flow with
+`LaunchedEffect`, or trigger it from a click with `rememberCoroutineScope`:
+
+```kotlin
+@Composable
+fun LoginFlow(authenticator: BiometricAuthenticator) {
+    var authState by remember { mutableStateOf<AuthState>(AuthState.NotLoggedIn) }
+    val scope = rememberCoroutineScope()
+
+    // Auto-prompt once (biometric-first); LaunchedEffect is lifecycle-aware and won't re-fire on
+    // recomposition.
+    LaunchedEffect(authState) {
+        if (authState is AuthState.NotLoggedIn) {
+            when (val result = authenticator.authenticate { title = "Sign in" }) {
+                is BiometricResult.Success -> authState = AuthState.LoggedIn(LoginMethod.Biometric)
+                else -> { /* fall back to the password form */ }
+            }
+        }
+    }
+
+    when (val state = authState) {
+        is AuthState.LoggedIn -> HomeScreen(
+            onLogout = { authState = AuthState.NotLoggedIn },
+        )
+        is AuthState.NotLoggedIn -> LoginScreen(
+            onUseBiometric = {
+                scope.launch { /* call authenticate() the same way */ }
+            },
+        )
+    }
+}
+```
+
+The key pattern: `authenticate()` is a normal `suspend` function, so call it from `LaunchedEffect`,
+`rememberCoroutineScope().launch { }`, or a `ViewModel`'s `viewModelScope` — and map the sealed
+`BiometricResult` into your UI state. See `sample/` for a complete working version of exactly this.
+
 ## Streaming events
 
 If you want to render prompt lifecycle in your UI, use the Flow variant:
