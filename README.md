@@ -13,7 +13,7 @@ with a coroutine-first API and optional Android Keystore crypto binding.
 
 ```kotlin
 dependencies {
-    implementation("com.alhakimi.biometricktx:biometric-ktx:0.1.0")
+    implementation("io.github.abdullahalhakimi:biometric-ktx:0.1.0")
 }
 ```
 
@@ -219,9 +219,56 @@ built-in Kotlin support (no separate `kotlin-android` plugin).
 
 ## Publishing
 
-Publishing is configured for Maven Central. Provide credentials and signing keys via environment
-variables (`OSSRH_USERNAME`, `OSSRH_PASSWORD`, `SIGNING_KEY`, `SIGNING_PASSWORD`) — nothing is
-committed to the repo.
+Published to Maven Central as **`io.github.abdullahalhakimi:biometric-ktx`** through the
+[Central Publisher Portal](https://central.sonatype.com/), driven by the
+[`com.vanniktech.maven.publish`](https://github.com/vanniktech/gradle-maven-publish-plugin) plugin.
+It owns the release variant + sources jar, generates the required `-javadoc.jar`, signs every
+artifact, and releases automatically after Central's validation.
+
+### One-time setup
+
+1. **Namespace** — verified on the Portal as `io.github.abdullahalhakimi`.
+2. **Token** — generate one at [central.sonatype.com/usertoken](https://central.sonatype.com/usertoken).
+3. **GPG key** — Central requires every artifact to be signed:
+
+   ```bash
+   gpg --gen-key                                   # RSA 4096, set a passphrase, use your real email
+   gpg --keyserver keyserver.ubuntu.com --send-keys <KEY_ID>   # publish the PUBLIC key
+   gpg --export-secret-keys --armor <KEY_ID>       # prints the PRIVATE key — copy all of it
+   ```
+
+### Credentials
+
+No secrets live in the repo. The [Publish workflow](.github/workflows/publish.yml) reads four
+**Settings → Secrets and variables → Actions → New repository secret** entries:
+
+| Secret | Value |
+| --- | --- |
+| `MAVEN_CENTRAL_USERNAME` | Portal token username |
+| `MAVEN_CENTRAL_PASSWORD` | Portal token password |
+| `SIGNING_KEY` | The full ASCII-armored private key from `gpg --export-secret-keys --armor` |
+| `SIGNING_PASSWORD` | The passphrase chosen in `gpg --gen-key` |
+
+### Cutting a release
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+CI runs the unit tests, then `publishAndReleaseToMavenCentral`. Artifacts typically show up on
+Maven Central 10–30 minutes after validation passes. Versions are immutable — a bad release must
+be superseded by a new version, never overwritten.
+
+### Local dry run
+
+```bash
+./gradlew :biometric:publishToMavenLocal
+```
+
+Produces the identical layout (`.aar`, `-sources.jar`, `-javadoc.jar`, `.pom`, `.module`, `.asc`
+signatures) under `~/.m2/repository` without contacting Central. Signing is still required, so the
+GPG key must be configured first.
 
 ## License
 

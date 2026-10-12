@@ -1,11 +1,13 @@
+import com.vanniktech.maven.publish.AndroidSingleVariantLibrary
+import com.vanniktech.maven.publish.JavadocJar
+import com.vanniktech.maven.publish.SourcesJar
+
 plugins {
     alias(libs.plugins.android.library)
-    alias(libs.plugins.dokka)
-    `maven-publish`
-    signing
+    alias(libs.plugins.maven.publish)
 }
 
-group = "com.alhakimi.biometricktx"
+group = "io.github.abdullahalhakimi"
 version = "0.1.0"
 
 android {
@@ -26,13 +28,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    publishing {
-        singleVariant("release") {
-            withSourcesJar()
-            withJavadocJar()
-        }
     }
 
     testOptions {
@@ -68,70 +63,55 @@ dependencies {
     testImplementation(libs.androidx.test.core)
 }
 
-// Maven Central / Sonatype publishing configuration.
-// Credentials and signing keys are read from environment variables / gradle.properties
-// so no secrets live in the repo. See README for the required variables.
-publishing {
-    publications {
-        register<MavenPublication>("release") {
-            groupId = "com.alhakimi.biometricktx"
-            artifactId = "biometric-ktx"
-            version = project.version.toString()
+// Maven Central publishing, targeting the Central Publisher Portal (central.sonatype.com).
+//
+// The com.vanniktech.maven.publish plugin replaces the old hand-rolled maven-publish/signing setup:
+// it wires the release variant + sources jar, generates the -javadoc.jar, applies GPG signing, and
+// uploads to the Portal. Credentials and keys are read from Gradle properties, which CI supplies as
+// ORG_GRADLE_PROJECT_* environment variables — no secrets live in this repo.
+mavenPublishing {
+    // Publish only the `release` variant, with a real sources jar and an empty -javadoc.jar.
+    // Central requires a -javadoc.jar to exist; for a Kotlin-only module Dokka would be the
+    // alternative, but an empty jar satisfies validation and avoids the Dokka V1 deprecation.
+    configure(
+        AndroidSingleVariantLibrary(
+            javadocJar = JavadocJar.Empty(),
+            sourcesJar = SourcesJar.Sources(),
+            variant = "release",
+        ),
+    )
 
-            afterEvaluate {
-                from(components["release"])
-            }
+    // groupId comes from `group` above, version from `version` above.
+    coordinates(artifactId = "biometric-ktx")
 
-            pom {
-                name.set("biometric-ktx")
-                description.set(
-                    "A thin, ergonomic Kotlin wrapper around AndroidX BiometricPrompt " +
-                        "with a coroutine-first API and optional Keystore crypto binding."
-                )
-                url.set("https://github.com/alhakimi/biometric-ktx")
-                licenses {
-                    license {
-                        name.set("MIT License")
-                        url.set("https://opensource.org/licenses/MIT")
-                    }
-                }
-                developers {
-                    developer {
-                        id.set("alhakimi")
-                        name.set("Alhakimi")
-                    }
-                }
-                scm {
-                    connection.set("scm:git:git://github.com/alhakimi/biometric-ktx.git")
-                    developerConnection.set("scm:git:ssh://github.com/alhakimi/biometric-ktx.git")
-                    url.set("https://github.com/alhakimi/biometric-ktx")
-                }
-            }
-        }
-    }
+    // Upload to the Central Portal and release automatically once validation passes, so a tag
+    // push needs no manual "Publish" click on the website.
+    publishToMavenCentral(automaticRelease = true)
+    signAllPublications()
 
-    repositories {
-        maven {
-            name = "sonatype"
-            val releasesRepoUrl = "https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/"
-            val snapshotsRepoUrl = "https://s01.oss.sonatype.org/content/repositories/snapshots/"
-            url = uri(
-                if (version.toString().endsWith("SNAPSHOT")) snapshotsRepoUrl else releasesRepoUrl
-            )
-            credentials {
-                username = findProperty("ossrhUsername") as String? ?: System.getenv("OSSRH_USERNAME")
-                password = findProperty("ossrhPassword") as String? ?: System.getenv("OSSRH_PASSWORD")
+    pom {
+        name.set("biometric-ktx")
+        description.set(
+            "A thin, ergonomic Kotlin wrapper around AndroidX BiometricPrompt " +
+                "with a coroutine-first API and optional Keystore crypto binding.",
+        )
+        url.set("https://github.com/abdullahalhakimi/biometric-ktx")
+        licenses {
+            license {
+                name.set("MIT License")
+                url.set("https://opensource.org/licenses/MIT")
             }
         }
-    }
-}
-
-signing {
-    val signingKey = findProperty("signingKey") as String? ?: System.getenv("SIGNING_KEY")
-    val signingPassword =
-        findProperty("signingPassword") as String? ?: System.getenv("SIGNING_PASSWORD")
-    if (signingKey != null) {
-        useInMemoryPgpKeys(signingKey, signingPassword)
-        sign(publishing.publications["release"])
+        developers {
+            developer {
+                id.set("abdullahalhakimi")
+                name.set("Abdullah Alhakimi")
+            }
+        }
+        scm {
+            connection.set("scm:git:git://github.com/abdullahalhakimi/biometric-ktx.git")
+            developerConnection.set("scm:git:ssh://github.com/abdullahalhakimi/biometric-ktx.git")
+            url.set("https://github.com/abdullahalhakimi/biometric-ktx")
+        }
     }
 }

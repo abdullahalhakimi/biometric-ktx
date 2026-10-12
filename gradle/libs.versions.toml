@@ -23,8 +23,8 @@ kotlinxCoroutinesTest = "1.10.2"
 robolectric = "4.16"
 androidxTestCore = "1.7.0"
 
-# Publishing / docs
-dokka = "2.0.0"
+# Publishing
+mavenPublish = "0.37.0"
 
 [libraries]
 androidx-annotation = { group = "androidx.annotation", name = "annotation", version.ref = "annotation" }
@@ -53,4 +53,4 @@ androidx-test-core = { group = "androidx.test", name = "core", version.ref = "an
 android-application = { id = "com.android.application", version.ref = "agp" }
 android-library = { id = "com.android.library", version.ref = "agp" }
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
-dokka = { id = "org.jetbrains.dokka", version.ref = "dokka" }
+maven-publish = { id = "com.vanniktech.maven.publish", version.ref = "mavenPublish" }
